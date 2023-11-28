@@ -30,7 +30,7 @@ import { ModLimitPatcher } from './modLimitPatch';
 import { registerActions } from './iconbarActions';
 import { PriorityManager } from './priorityManager';
 
-import { installMixed, testSupportedMixed } from './installers';
+import { installMixed, testSupportedMixed, installDLCMod, testDLCMod } from './installers';
 import { restoreFromProfile, storeToProfile } from './mergeBackup';
 
 import { getMergedModNames } from './mergeInventoryParsing';
@@ -40,6 +40,8 @@ import { W3Reducer } from './reducers';
 
 const GOG_ID = '1207664663';
 const GOG_ID_GOTY = '1495134320';
+const GOG_WH_ID = '1207664643';
+const GOG_WH_GOTY = '1640424747';
 const STEAM_ID = '499450';
 const STEAM_ID_WH = '292030';
 
@@ -48,7 +50,7 @@ const CONFIG_MATRIX_REL_PATH = path.join('bin', 'config', 'r4game', 'user_config
 let _INI_STRUCT = {};
 let _PREVIOUS_LO = {};
 
-const tools = [
+const tools: types.ITool[] = [
   {
     id: SCRIPT_MERGER_ID,
     name: 'W3 Script Merger',
@@ -56,6 +58,26 @@ const tools = [
     executable: () => 'WitcherScriptMerger.exe',
     requiredFiles: [
       'WitcherScriptMerger.exe',
+    ],
+  },
+  {
+    id: GAME_ID + '_DX11',
+    name: 'The Witcher 3 (DX11)',
+    logo: 'auto',
+    relative: true,
+    executable: () => 'bin/x64/witcher3.exe',
+    requiredFiles: [
+      'bin/x64/witcher3.exe',
+    ],
+  },
+  {
+    id: GAME_ID + '_DX12',
+    name: 'The Witcher 3 (DX12)',
+    logo: 'auto',
+    relative: true,
+    executable: () => 'bin/x64_DX12/witcher3.exe',
+    requiredFiles: [
+      'bin/x64_DX12/witcher3.exe',
     ],
   },
 ];
@@ -198,7 +220,10 @@ function findGame(): Bluebird<string> {
     }
     return Bluebird.resolve(instPath.value as string);
   } catch (err) {
-    return util.GameStoreHelper.findByAppId([GOG_ID_GOTY, GOG_ID, STEAM_ID, STEAM_ID_WH])
+    return util.GameStoreHelper.findByAppId([
+      GOG_ID_GOTY, GOG_ID, GOG_WH_ID, GOG_WH_GOTY,
+      STEAM_ID, STEAM_ID_WH,
+    ])
       .then(game => game.gamePath);
   }
 }
@@ -1074,6 +1099,18 @@ export function toBlue<T>(func: (...args: any[]) => Promise<T>): (...args: any[]
   return (...args: any[]) => Bluebird.resolve(func(...args));
 }
 
+function determineExecutable(discoveredPath: string): string {
+  if (discoveredPath !== undefined) {
+    try {
+      fs.statSync(path.join(discoveredPath, 'bin', 'x64_DX12', 'witcher3.exe'));
+      return 'bin/x64_DX12/witcher3.exe';
+    } catch (err) {
+      // nop, use fallback
+    }
+  }
+  return 'bin/x64/witcher3.exe';
+}
+
 function main(context: types.IExtensionContext) {
   context.registerReducer(['settings', 'witcher3'], W3Reducer);
   let priorityManager: PriorityManager;
@@ -1085,7 +1122,7 @@ function main(context: types.IExtensionContext) {
     queryPath: findGame,
     queryModPath: () => 'Mods',
     logo: 'gameart.jpg',
-    executable: () => 'bin/x64/witcher3.exe',
+    executable: determineExecutable,
     setup: toBlue((discovery) => prepareForModding(context, discovery)),
     supportedTools: tools,
     requiresCleanup: true,
@@ -1099,6 +1136,7 @@ function main(context: types.IExtensionContext) {
       steamAppId: 292030,
       ignoreConflicts: DO_NOT_DEPLOY,
       ignoreDeploy: DO_NOT_DEPLOY,
+      hashFiles: ['bin/x64/witcher3.exe'],
     },
   });
 
@@ -1129,6 +1167,7 @@ function main(context: types.IExtensionContext) {
     toBlue(testSupportedContent), toBlue(installContent));
   context.registerInstaller('witcher3menumodroot', 20,
     toBlue(testMenuModRoot as any), toBlue(installMenuMod));
+  context.registerInstaller('witcher3dlcmod', 60, testDLCMod as any, installDLCMod as any)
   context.registerInstaller('scriptmergerdummy', 15,
     toBlue(scriptMergerTest), toBlue((files) => scriptMergerDummyInstaller(context, files)));
 
@@ -1311,7 +1350,7 @@ function main(context: types.IExtensionContext) {
           + 'remove the existing merge and re-apply it.');
       }
       const loadOrder = util.getSafe(state, ['persistent', 'loadOrder', activeProfile.id], {});
-      const docFiles = deployment['witcher3menumodroot']
+      const docFiles = (deployment['witcher3menumodroot'] ?? [])
         .filter(file => file.relPath.endsWith(PART_SUFFIX)
                         && (file.relPath.indexOf(INPUT_XML_FILENAME) === -1));
       const menuModPromise = () => {
@@ -1357,7 +1396,9 @@ function main(context: types.IExtensionContext) {
         await storeToProfile(context, lastProfId)
           .then(() => restoreFromProfile(context, profile.id));
       } catch (err) {
-        context.api.showErrorNotification('Failed to store profile specific merged items', err);
+        if (!(err instanceof util.UserCanceled)) {
+          context.api.showErrorNotification('Failed to store profile specific merged items', err);
+        }
       }
     });
 

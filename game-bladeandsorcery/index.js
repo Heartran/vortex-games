@@ -6,13 +6,13 @@ const semver = require('semver');
 const { app, remote } = require('electron');
 const uniApp = app || remote.app;
 
-const { GAME_ID, I18N_NAMESPACE, MOD_MANIFEST, GameNotDiscoveredException } = require('./common');
+const { BAS_EXEC, GAME_ID, I18N_NAMESPACE, MOD_MANIFEST, GameNotDiscoveredException } = require('./common');
 const { testModInstaller, installMulleMod, installOfficialMod } = require('./installers');
 
-const { migrate010, migrate020 } = require('./migrations');
+const { migrate010, migrate020, migrate0212 } = require('./migrations');
 
 const { isOfficialModType, streamingAssetsPath, getModName,
-        getGameVersion, getMinModVersion, getDiscoveryPath } = require('./util');
+        getGameVersion, getMinModVersion, getDiscoveryPath, missingGameJsonError } = require('./util');
 
 const React = require('react');
 const BS = require('react-bootstrap');
@@ -30,9 +30,9 @@ const supportedTools = [
     id: 'SteamVR',
     name: 'Blade and Sorcery (SteamVR)',
     logo: 'steam.png',
-    executable: () => 'BladeAndSorcery.exe',
+    executable: () => BAS_EXEC,
     requiredFiles: [
-      'BladeAndSorcery.exe'
+      BAS_EXEC
     ],
     parameters: ['-vrmode', 'openvr'],
     relative: true,
@@ -41,9 +41,9 @@ const supportedTools = [
     id: 'OculusVR',
     name: 'Blade and Sorcery (OculusVR)',
     logo: 'oculus.png',
-    executable: () => 'BladeAndSorcery.exe',
+    executable: () => BAS_EXEC,
     requiredFiles: [
-      'BladeAndSorcery.exe'
+      BAS_EXEC
     ],
     parameters: ['-vrmode', 'oculus'],
     relative: true,
@@ -108,12 +108,13 @@ async function getOfficialModType(api, discovery = undefined) {
   }
   let gameVersion;
   try {
-    gameVersion = await getGameVersion(discoveryPath);
+    gameVersion = await getGameVersion(discoveryPath, BAS_EXEC);
   } catch (err) {
-    // Failed to ascertain the game's version
-    return Promise.reject(err);
+    return missingGameJsonError(api, err);
   }
-  const modType = semver.gte(semver.coerce(gameVersion), semver.coerce('8.4'))
+  const segments = gameVersion.split('.');
+  const ver = segments[0] === '0' ? segments.slice(1).join('.') : gameVersion;
+  const modType = semver.gte(semver.coerce(ver), semver.coerce('8.4'))
     ? 'bas-official-modtype' : 'bas-legacy-modtype';
   return Promise.resolve(modType);
 }
@@ -351,15 +352,16 @@ function infoComponent(context, props) {
         React.createElement('li', {}, t('The load order file will only be picked up by the game in version 8.4 Beta 5 and above', { ns: I18N_NAMESPACE })))));
 }
 
-function resolveGameVersion(discoveryPath) {
-  if (semver.satisfies(uniApp.getVersion(), '<1.4.0')) {
+function resolveGameVersion(api, discoveryPath) {
+  if ((process.env.NODE_ENV !== 'development') && semver.satisfies(uniApp.getVersion(), '<1.4.0')) {
     return Promise.reject(new util.ProcessCanceled('not supported in older Vortex versions'));
   }
-  return getMinModVersion(discoveryPath)
+  return getMinModVersion(discoveryPath, BAS_EXEC, true)
     .then(minVer => {
       const coerced = semver.coerce(minVer.version);
       return Promise.resolve(coerced.version);
     })
+    .catch(err => missingGameJsonError(api, err))
 }
 
 function requiresLauncher(gamePath) {
@@ -388,10 +390,10 @@ function main(context) {
     mergeMods: true,
     queryPath: findGame,
     queryModPath: () => path.join(streamingAssetsPath(), 'Mods'),
-    getGameVersion: resolveGameVersion,
+    getGameVersion: (discoveryPath) => resolveGameVersion(context.api, discoveryPath),
     logo: 'gameart.jpg',
-    executable: () => 'BladeAndSorcery.exe',
-    requiredFiles: ['BladeAndSorcery.exe'],
+    executable: () => BAS_EXEC,
+    requiredFiles: [BAS_EXEC],
     requiresCleanup: true,
     setup: (discovery) => prepareForModding(discovery, context.api),
     supportedTools,
@@ -406,6 +408,7 @@ function main(context) {
 
   context.registerMigration(old => migrate010(context.api, old));
   context.registerMigration(old => migrate020(context.api, old));
+  context.registerMigration(old => migrate0212(context.api, old));
 
   // Only reason why we're still keeping this installer is to block users from
   //  installing outdated mods.
@@ -439,6 +442,9 @@ function main(context) {
     callback: (loadOrder) => {
       writeLOToFile(context.api, loadOrder)
         .catch(err => {
+          if (err instanceof util.UserCanceled) {
+            return;
+          }
           const allowReport = !['EPERM', 'EISDIR'].includes(err.code) && !(err instanceof GameNotDiscoveredException)
           context.api.showErrorNotification('failed to write to load order file', err,
             { allowReport });

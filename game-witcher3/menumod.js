@@ -81,7 +81,9 @@ function populateCache(api, activeProfile, modIds, initialCacheValue) {
   const invalidModTypes = ['witcher3menumoddocuments'];
   const affectedModIds = modIds === undefined ? Object.keys(mods) : modIds;
   const enabledMods = affectedModIds
-    .filter(key => !!modState[key]?.enabled && !invalidModTypes.includes(mods[key].type))
+    .filter(key => (mods[key]?.installationPath !== undefined)
+                && !!modState[key]?.enabled &&
+                !invalidModTypes.includes(mods[key].type))
     .sort((lhs, rhs) => (loadOrder[lhs]?.pos || getNextId()) - (loadOrder[rhs]?.pos || getNextId()))
     .map(key => mods[key]);
 
@@ -97,7 +99,7 @@ function populateCache(api, activeProfile, modIds, initialCacheValue) {
     }).catch(err => {
       if  (['ENOENT', 'ENOTFOUND'].indexOf(err.code) === -1) {
         log('error', 'Failed to lookup menu mod files',
-          { path: path.join(stagingFolder, mod.installationPath), error: err.message });
+          { path: source, error: err.message });
       }
     })
 
@@ -106,6 +108,9 @@ function populateCache(api, activeProfile, modIds, initialCacheValue) {
 
   const stagingFolder = selectors.installPathForGame(state, GAME_ID);
   return Promise.reduce(enabledMods, (accum, mod) => {
+    if (mod.installationPath === undefined) {
+      return accum;
+    }
     return getRelevantModEntries(path.join(stagingFolder, mod.installationPath))
       .then(entries => {
         return Promise.each(entries, filepath => {
@@ -171,8 +176,9 @@ async function onWillDeploy(api, deployment, activeProfile) {
     return;
   }
 
-  const docFiles = deployment['witcher3menumodroot'].filter(file => (file.relPath.endsWith(PART_SUFFIX))
-    && (file.relPath.indexOf(INPUT_XML_FILENAME) === -1));
+  const docFiles = (deployment['witcher3menumodroot'] ?? [])
+    .filter(file => (file.relPath.endsWith(PART_SUFFIX))
+                 && (file.relPath.indexOf(INPUT_XML_FILENAME) === -1));
 
   if (docFiles.length <= 0) {
     // No doc files, no problem.

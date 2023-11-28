@@ -6,9 +6,9 @@ const { util } = require('vortex-api');
 const { app, remote } = require('electron');
 const uniApp = app || remote.app;
 
-const { GAME_ID, MOD_MANIFEST, GameNotDiscoveredException } = require('./common');
+const { BAS_EXEC, GAME_ID, MOD_MANIFEST, GameNotDiscoveredException } = require('./common');
 const { getModName, checkModGameVersion, getGameVersion,
-  getMinModVersion, getDiscoveryPath } = require('./util');
+  getMinModVersion, getDiscoveryPath, missingGameJsonError } = require('./util');
 
 function testModInstaller(files, gameId, fileName) {
   // Make sure we're able to support this mod.
@@ -30,12 +30,20 @@ async function installOfficialMod(files,
   let gameVersion;
   const discoveryPath = getDiscoveryPath(api);
   if (discoveryPath === undefined) {
-    return Promise.reject(new GameNotDiscoveredException());
+    return {
+      instructions: [
+        {
+          type: 'error',
+          value: 'fatal',
+          source: 'Blade & Sorcery is not discovered, please manage the game first and follow the instructions there.',
+        },
+      ],
+    };
   }
   let isEngineInject;
   try {
-    gameVersion = await getGameVersion(discoveryPath);
-    minModVersion = await getMinModVersion(discoveryPath);
+    gameVersion = await getGameVersion(discoveryPath, BAS_EXEC);
+    minModVersion = await getMinModVersion(discoveryPath, BAS_EXEC);
     try {
       const relPath = files.find(f => path.basename(f).toLowerCase() === MOD_MANIFEST);
       isEngineInject = path.dirname(relPath).startsWith('BladeAndSorcery_Data');
@@ -56,13 +64,7 @@ async function installOfficialMod(files,
     minModVersion.version = minModVersion.version.toString().replace(',', '.');
   }
   catch (err) {
-    if (err.message.indexOf('Missing config file.') !== -1) {
-      api.showErrorNotification('Missing config file', 'Please run the game at least once to ensure it '
-        + 'generates all required game files; alternatively re-install the game.', { allowReport: false });
-      throw new util.ProcessCanceled('Missing config file.');
-    }
-
-    throw err;
+    return missingGameJsonError(api, err);
   }
 
   if (minModVersion === undefined) {
@@ -112,17 +114,25 @@ async function installOfficialMod(files,
           return Promise.reject(err);
         }
 
-        if (semver.satisfies(uniApp.getVersion(), '>=1.4.0')) {
+        const segments = gameVersion.split('.');
+        const ver = segments[0] === '0' ? segments.slice(1).join('.') : gameVersion;
+        if ((process.env.NODE_ENV === 'development') || semver.satisfies(uniApp.getVersion(), '>=1.4.0')) {
+          // All this bullshit could've been avoided had the game used semantic versioning
+          //  from the get-go.
           instructions.push({
             type: 'attribute',
             key: 'maxGameVersion',
-            value: semver.coerce(modVersion.modVersion).version,
+            value: (segments[0] === '0')
+              ? (modVersion.modVersion.split('.')[0] === '0')
+                ? semver.coerce(modVersion.modVersion).version
+                : semver.coerce(`0.${modVersion.modVersion}`).version
+              : semver.coerce(modVersion.modVersion).version,
           })
         }
 
         const modTypeInstr = {
           type: 'setmodtype',
-          value: isEngineInject ? 'dinput' : semver.gte(semver.coerce(gameVersion), semver.coerce('8.4'))
+          value: isEngineInject ? 'dinput' : semver.gte(semver.coerce(ver), semver.coerce('8.4'))
             ? 'bas-official-modtype'
             : 'bas-legacy-modtype'
         }

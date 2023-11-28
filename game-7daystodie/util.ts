@@ -2,10 +2,12 @@ import Bluebird from 'bluebird';
 import path from 'path';
 import turbowalk from 'turbowalk';
 import { fs, selectors, types, util } from 'vortex-api';
-import { parseStringPromise } from 'xml2js';
+import { Parser } from 'xml2js';
 
-import { GAME_ID, LO_FILE_NAME, MOD_INFO } from './common';
+import { GAME_ID, MOD_INFO, loadOrderFilePath } from './common';
 import { IProps } from './types';
+
+const PARSER = new Parser({explicitRoot: false});
 
 // We _should_ just export this from vortex-api, but I guess it's not wise to make it
 //  easy for users since we want to move away from bluebird in the future ?
@@ -45,7 +47,7 @@ export async function ensureLOFile(context: types.IExtensionContext,
     return Promise.reject(new util.ProcessCanceled('failed to generate game props'));
   }
 
-  const targetPath = path.join(props.discovery.path, props.profile.id + '_' + LO_FILE_NAME);
+  const targetPath = loadOrderFilePath(props.profile.id);
   try {
     await fs.statAsync(targetPath)
       .catch({ code: 'ENOENT' }, () => fs.writeFileAsync(targetPath, JSON.stringify([]), { encoding: 'utf8' }));
@@ -98,9 +100,10 @@ export async function getModName(modInfoPath): Promise<any> {
   let modInfo;
   try {
     const xmlData = await fs.readFileAsync(modInfoPath);
-    modInfo = await parseStringPromise(xmlData);
-    const modName = modInfo?.ModInfo?.[0].Name?.[0]?.$?.value
-                 || modInfo?.xml.ModInfo?.[0]?.Name?.[0]?.$?.value;
+    modInfo = await PARSER.parseStringPromise(xmlData);
+    const modName = modInfo?.DisplayName?.[0]?.$?.value
+                 || modInfo?.ModInfo?.[0]?.Name?.[0]?.$?.value
+                 || modInfo?.Name?.[0]?.$?.value;
     return (modName !== undefined)
       ? Promise.resolve(modName)
       : Promise.reject(new util.DataInvalid('Unexpected modinfo.xml format'));

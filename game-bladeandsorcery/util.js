@@ -3,6 +3,8 @@ const semver = require('semver');
 const rjson = require('relaxed-json');
 const { fs, log, util } = require('vortex-api');
 
+const { getFileVersion, getProductVersion } = require('exe-version');
+
 const { GAME_ID, BAS_DB } = require('./common');
 
 // The global file holds current gameversion information
@@ -121,24 +123,34 @@ async function extractBaSDB(discoveryPath) {
   }
 }
 
-async function getGameVersion(discoveryPath) {
-  const configFile = await findGameConfig(discoveryPath);
-  let gameVersion = await getJSONElement(configFile, 'gameVersion');
-  return gameVersion.toString().replace(',', '.');
+async function getGameVersion(discoveryPath, execFile) {
+  const gameVer = getFileVersion(path.join(discoveryPath, execFile));
+  if (gameVer.match(/^20[0-9][0-9]/)) {
+    const configFile = await findGameConfig(discoveryPath);
+    let gameVersion = await getJSONElement(configFile, 'gameVersion');
+    return gameVersion.toString().replace(',', '.');
+  } else {
+    return gameVer;
+  }
 }
 
-async function getMinModVersion(discoveryPath) {
-  const configFile = await findGameConfig(discoveryPath);
-  try {
-    const version = await getJSONElement(configFile, 'minModVersion');
-    return { version, majorOnly: false };
-  } catch (err) {
-    if (err.message.indexOf('JSON element is missing') !== -1) {
-      const version = await getJSONElement(configFile, 'gameVersion');
-      return { version, majorOnly: true };
-    } else {
-      throw err;
+async function getMinModVersion(discoveryPath, execFile) {
+  const prodVer = getProductVersion(path.join(discoveryPath, execFile));
+  if (prodVer.match(/^20[0-9][0-9]/)) {
+    const configFile = await findGameConfig(discoveryPath);
+    try {
+      const version = await getJSONElement(configFile, 'minModVersion');
+      return { version, majorOnly: false };
+    } catch (err) {
+      if (err.message.indexOf('JSON element is missing') !== -1) {
+        const version = await getJSONElement(configFile, 'gameVersion');
+        return { version, majorOnly: true };
+      } else {
+        throw err;
+      }
     }
+  } else {
+    return { version: prodVer, majorOnly: false };
   }
 }
 
@@ -178,6 +190,26 @@ function getDiscoveryPath(api) {
   return discovery.path;
 }
 
+function missingGameJsonError(api, err) {
+  if (err instanceof util.NotFound) {
+    api.sendNotification({
+      id: 'missing-game-json',
+      type: 'error',
+      message: 'Missing Game.json file',
+      actions: [
+        { title: 'More', action: (dismiss) =>
+          api.showDialog('info', 'Missing Game.json file', {
+            text: api.translate('Your game copy is missing its Game.json file, please try running the game at least once, or re-install the game.')
+          }, [ { label: 'Close', action: () => dismiss() } ])
+        },
+      ],
+    })
+    return Promise.reject(new util.ProcessCanceled('Missing Game.json file'));
+  } else {
+    return Promise.reject(err);
+  }
+}
+
 function streamingAssetsPath() {
   return path.join('BladeAndSorcery_Data', 'StreamingAssets');
 }
@@ -196,4 +228,5 @@ module.exports = {
   checkModGameVersion,
   isOfficialModType,
   streamingAssetsPath,
+  missingGameJsonError,
 }

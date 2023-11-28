@@ -277,7 +277,7 @@ function writeOrderFile(filePath, modList) {
     .then(() => fs.writeFileAsync(filePath, modList.join('\n'), { encoding: 'utf8' }));
 }
 
-function main(context) {
+function main(context: types.IExtensionContext) {
   context.registerGame({
     id: GAME_ID,
     name: 'Kingdom Come:\tDeliverance',
@@ -372,7 +372,12 @@ function main(context) {
       getManuallyAddedMods(disabled, enabled, modsOrderFilePath, context.api)
         .then(manuallyAdded => {
           writeOrderFile(modsOrderFilePath, manuallyAdded)
-            .then(() => setNewOrder({ context, profile }, manuallyAdded));
+            .then(() => setNewOrder({ context, profile }, manuallyAdded))
+            .catch(err => {
+              const allowReport = !(err instanceof util.UserCanceled)
+                                && (err['code'] !== 'EPERM');
+              context.api.showErrorNotification('Failed to write to load order file', err, { allowReport });
+            });
         })
         .catch(err => {
           const userCanceled = (err instanceof util.UserCanceled);
@@ -381,7 +386,7 @@ function main(context) {
     });
 
     context.api.onAsync('did-deploy', (profileId, deployment) => {
-      const state = context.api.store.getState();
+      const state = context.api.getState();
       const profile = selectors.profileById(state, profileId);
       if (profile === undefined || profile.gameId !== GAME_ID) {
 
@@ -392,7 +397,7 @@ function main(context) {
         return Promise.resolve();
       }
 
-      const loadOrder = util.getSafe(state, ['persistent', 'loadOrder', profileId], []);
+      const loadOrder = state.persistent['loadOrder']?.[profileId] ?? [];
       const discovery = util.getSafe(state, ['settings', 'gameMode', 'discovered', profile.gameId], undefined);
 
       if ((discovery === undefined) || (discovery.path === undefined)) {

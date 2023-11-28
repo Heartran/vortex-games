@@ -8,6 +8,8 @@ const KENSHI_ID = 'kenshi';
 const STEAM_EXE = 'kenshi_x64.exe';
 const GOG_EXE = 'kenshi_GOG_x64.exe';
 
+const VERSION_FILE = 'currentVersion.txt';
+
 // The mod file is expected to be at the root of the mod
 const MOD_FILE_EXT = '.mod';
 
@@ -46,12 +48,9 @@ function prepareForModding(discovery) {
 
 // Kenshi's Steam version requires the game to be executed
 //  via Steam in order for it to add workshop mods.
-function requiresLauncher(gamePath) {
-  return fs.readdirAsync(gamePath)
-    .then(files => (files.find(file => file.indexOf(STEAM_DLL) !== -1) !== undefined)
-      ? Promise.resolve({ launcher: 'steam' })
-      : Promise.resolve(undefined))
-    .catch(err => Promise.reject(err));
+function requiresLauncher(gamePath, store) {
+
+    return store === 'steam' ?  Promise.resolve({ launcher: 'steam' }) : Promise.resolve(undefined);
 }
 
 function installContent(files) {
@@ -105,6 +104,11 @@ function getExecutable(discoveryPath) {
   return execFile;
 }
 
+function getGameVersion(discoveryPath) {
+  return fs.readFileAsync(path.join(discoveryPath, VERSION_FILE), { encoding: 'utf8' })
+    .then(res => Promise.resolve(res.split(' ')[1]));
+}
+
 function main(context) {
 context.registerGame({
     id: KENSHI_ID,
@@ -114,6 +118,7 @@ context.registerGame({
     queryModPath: () => 'mods',
     logo: 'gameart.jpg',
     executable: (discoveryPath) => getExecutable(discoveryPath),
+    getGameVersion,
     supportedToos: tools, // Assign the tools in the registerGame API call
     requiredFiles: [
       'OgreMain_x64.dll',

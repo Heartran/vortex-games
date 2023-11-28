@@ -3,6 +3,8 @@ const path = require('path');
 const winapi = require('winapi-bindings');
 const { fs, util } = require('vortex-api');
 
+const { default: IniParser, WinapiFormat } = require('vortex-parse-ini');
+
 const GAME_ID = 'vampirebloodlines';
 const STEAM_ID = 2600;
 const GOG_ID = 1207659240;
@@ -43,20 +45,30 @@ function prepareForModding(discovery) {
   return fs.ensureDirWritableAsync(path.join(discovery.path, 'Vampire'), () => Promise.resolve());
 }
 
-function getUnofficialModPath() {
-  const state = _API.store.getState();
+function getUnofficialModPath(api) {
+  const state = api.getState();
   const discovery = util.getSafe(state, ['settings', 'gameMode', 'discovered', GAME_ID], undefined);
   return path.join(discovery.path, 'Unofficial_Patch');
 }
 
-function isUPModType(instructions) {
-  return fs.statAsync(getUnofficialModPath())
+function isUPModType(api, instructions) {
+  return fs.statAsync(getUnofficialModPath(api))
     .then(() => Promise.resolve(true))
     .catch(() => Promise.resolve(false));
 }
 
+function getGameVersion(discoveryPath) {
+  const parser = new IniParser(new WinapiFormat());
+  return parser.read(path.join(discoveryPath, 'version.inf'))
+    .then((data) => {
+      const version = data?.data?.['Version Info']?.ExtVersion;
+      return (version)
+        ? Promise.resolve(version)
+        : Promise.reject(new util.DataInvalid('Invalid version file'))
+    });
+}
+
 function main(context) {
-  _API = context.api;
   context.registerGame({
     id: GAME_ID,
     name: 'Vampire the Masquerade\tBloodlines',
@@ -64,6 +76,7 @@ function main(context) {
     mergeMods: true,
     queryPath: findGame,
     requiresLauncher,
+    getGameVersion,
     queryModPath: () => 'Vampire',
     executable: () => 'Vampire.exe',
     requiredFiles: [
@@ -81,8 +94,8 @@ function main(context) {
   // The "unofficial patch" mod modifies the mods folder. GoG seems to include
   //  this by default ?
   context.registerModType('vtmb-up-modtype', 25,
-    (gameId) => gameId === GAME_ID, () => getUnofficialModPath(),
-    (instructions) => isUPModType(instructions));
+    (gameId) => gameId === GAME_ID, () => getUnofficialModPath(context.api),
+    (instructions) => isUPModType(context.api, instructions));
 }
 
 module.exports = {

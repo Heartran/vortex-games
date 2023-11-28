@@ -46,6 +46,7 @@ class MasterChiefCollectionGame {
     this.shortName = 'Halo: MCC';
     this.logo = 'gameart.jpg';
     this.api = context.api;
+    this.getGameVersion = resolveGameVersion,
     this.requiredFiles = [
       this.executable(),
     ];
@@ -170,7 +171,7 @@ class MasterChiefCollectionGame {
         launcher: 'steam',
         addInfo: {
           appId: STEAM_ID,
-          parameters: ['option1'],
+          parameters: ['option2'],
           launchType: 'gamestore',
         }
       });
@@ -258,6 +259,12 @@ function install(context, files, destinationPath) {
       return Promise.resolve(accum);
     }, []).then(instructions => Promise.resolve({ instructions }));
   });
+}
+
+function resolveGameVersion(discoveryPath) {
+  const versionPath = path.join(discoveryPath, 'build_tag.txt');
+  return fs.readFileAsync(versionPath, { encoding: 'utf8' })
+    .then((res) => Promise.resolve(res.split('\r\n')[0].trim()));
 }
 
 function testModConfigInstaller(files, gameId) {
